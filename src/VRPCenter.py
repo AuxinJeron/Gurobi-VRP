@@ -65,7 +65,7 @@ class VRPCenter:
     def start(self):
         model = Model("TSP")
         n = len(self.antGraph.nodes_mat)
-        delivers_num = 5
+        delivers_num = len(self.delivers)
         tspPainter.drawDeliver(self.delivers[0:delivers_num])
         # Create variables
 
@@ -79,6 +79,7 @@ class VRPCenter:
 
         obj = quicksum( self.distance(i,j) / 2 * x[i, j, k] for i in range(n) for j in range(n) for k in range(delivers_num) if i != j)
         model.setObjective(obj)
+
         # Add degree-2 constraint, and forbid loops
 
         degree = {}
