@@ -67,14 +67,20 @@ class VRPCenter:
         n = len(self.antGraph.nodes_mat)
         delivers_num = len(self.delivers)
         tspPainter.drawDeliver(self.delivers[0:delivers_num])
-        # Create variables
 
+        # Create variables
         x = {}
         for i in range(n):
             for j in range(i+1):
                 for k in range(delivers_num):
                     x[i, j, k] = model.addVar(vtype=GRB.BINARY, name='e' + str(i) + '_' + str(j) + '_' + str(k))
                     x[j, i, k] = x[i, j, k]
+        model.update()
+
+        capacity = {}
+        for k in range(delivers_num):
+            for i in range(n):
+                capacity[i, k] = model.addVar(vtype=GRB.INTEGER, name='capacity_' + str(i) + '_' + str(k), lb=0)
         model.update()
 
         obj = quicksum( self.distance(i,j) / 2 * x[i, j, k] for i in range(n) for j in range(n) for k in range(delivers_num) if i != j)
@@ -90,9 +96,46 @@ class VRPCenter:
 
         for i in range(n):
             for k in range(delivers_num):
+                start_point = self.delivers[k].pos
                 model.addConstr(quicksum(x[i, j, k] for j in range(n)) == 2 * degree[i,k])
+                model.addConstr(degree[i, k], GRB.LESS_EQUAL, degree[start_point, k])
                 x[i, i, k].ub = 0
-            model.addConstr(quicksum(degree[i, k] for k in range(delivers_num)) >= 1)
+            #model.addConstr(quicksum(degree[i, k] for k in range(delivers_num)) >= 1)
+
+        # Add locker point
+        active_locker_pos = set()
+        for deliver in self.delivers:
+            locker_point = self.lockers_dict[deliver.locker_id].pos
+            active_locker_pos.add(locker_point)
+        for locker_point in active_locker_pos:
+            model.addConstr(quicksum(degree[locker_point, k] for k in range(delivers_num)) >= 1)
+
+        locker_pos = set()
+        for locker in self.lockers:
+            locker_pos.add(locker.pos)
+        # Add finish demand constraint
+        for i in range(n):
+            # model.addConstr(quicksum(capacity[i, k] for k in range(delivers_num) if degree[i, k] >= 1) >= self.demands[i])
+            if not i in locker_pos:
+                model.addQConstr(quicksum(capacity[i, k]*degree[i, k] for k in range(delivers_num)) >= self.demands[i])
+
+        # Add max distance constraint
+        for k in range(delivers_num):
+            model.addConstr(quicksum( self.distance(i,j)/2 * x[i, j, k] for i in range(n) for j in range(n) if i != j) <= self.delivers[k].max_distance)
+            start_point = self.delivers[k].pos
+            locker_point = self.lockers_dict[self.delivers[k].locker_id].pos
+            model.addConstr(degree[locker_point, k] >= 1)
+            model.addConstr(degree[locker_point, k] <= degree[start_point, k])
+            if start_point != locker_point:
+                model.addConstr(x[start_point, locker_point, k] >= degree[start_point, k])
+            for i in range(n):
+                model.addConstr(degree[i,k] <= degree[locker_point,k])
+
+        # Add max capacity constraint
+        for k in range(delivers_num):
+            locker_point = self.lockers_dict[self.delivers[k].locker_id].pos
+            model.addConstr(quicksum( capacity[i, k] for i in range(n) if i != locker_point ) <= self.delivers[k].max_capacity)
+
         # Callback - use lazy constraints to eliminate sub-tours
 
         def subtourelim(model, where):
@@ -121,9 +164,9 @@ class VRPCenter:
                         model.cbLazy(expr <= len(tour) - 1)
 
                     # must contain the start point
-                    start_point = self.delivers[k].pos
-                    if not start_point in visited:
-                        model.cbLazy(degree[start_point, k] >= 1)
+                    # start_point = self.delivers[k].pos
+                    # if not start_point in visited:
+                    #     model.cbLazy(degree[start_point, k] >= 1)
 
         # Given a list of edges, finds the shortest subtour
 
@@ -186,22 +229,24 @@ class VRPCenter:
 
         for k in range(delivers_num):
             for i in range(n):
-                for j in range(i + 1):
-                    if x[i, j, k].X == 1:
-                        print("{} {} {}".format(k, i, j))
+                #print degree[i, k]
+                print capacity[i, k]
+
         for k in range(delivers_num):
             color = color_rgb(random.randrange(255), random.randrange(255), random.randrange(255))
             tspPainter.drawPathX(x, n, k, color)
-
-        for i in range(n):
-            print quicksum(degree[i, k].X for k in range(delivers_num))
 
         node_mat = [[[0 for i in range(n)] for i in range(n)] for i in range(delivers_num)]
         for k in range(delivers_num):
             for i in range(n):
                 for j in range(n):
                     node_mat[k][i][j] = x[i, j, k]
-        #print node_mat[0]
+        # print node_mat[0]
+        for i in range(n):
+            print 'capacity ' + str(i) + '_' + repr(quicksum(capacity[i,k] for k in range(delivers_num) if degree[i, k].X >= 1))
+
+        for i in locker_pos:
+            print 'locker' + str(i) + '_' + repr(quicksum(degree[i, k].X for k in range(delivers_num)))
 
     def locker_scheme(self, locker, path_routes):
         capacity = 0
